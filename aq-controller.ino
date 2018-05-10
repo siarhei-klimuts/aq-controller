@@ -9,7 +9,7 @@
 #include <ClickEncoder.h>
 #include <TimerOne.h>
 
-#include "thermistor.h"
+#include "RTClib.h"
 
 // OLED display TWI address
 #define OLED_ADDR 0x3C
@@ -19,32 +19,38 @@
 #define ENCODER_CLK A2
 
 //relay
-#define LIGHT_PIN 8
-#define CO2_PIN 9
-#define COOLER_PIN 10
+#define LIGHT_PIN 3
+#define CO2_PIN 2
+#define COOLER_PIN 4
 
 // thermistor
 #define NTC_PIN A3
-#define THERM_RESISTANCE 10230
+#define THERM_RESISTANCE 10000
 #define THERM_BETA 3950
-#define THERM_SERIES_RESISTOR 9770
+#define THERM_SERIES_RESISTOR 9980
 
-#define SECOND 1000
-#define MINUTE 60000
-#define HOUR 3600000
-#define MAX_TIME 86400000
+const int    SAMPLE_NUMBER      = 10;
+const double MAX_ADC            = 1023.0;
+const double ROOM_TEMP          = 298.15;   // room temperature in Kelvin
 
-typedef long time_t;
+#define SECOND 1000UL
+#define MINUTE 60000UL
+#define HOUR 3600000UL
+#define MAX_TIME 86400000UL
+
+#define SETTINGS_BYTE 0x00
+
+typedef unsigned long time_t;
 typedef char time_str_t[9];
 
 typedef int16_t temp_t;
 typedef char temp_str_t[7];
 
 struct Settings {
-  int8_t co2 = 0;
-  temp_t temperature = 0;
-  time_t lightOn = 0;
-  time_t lightOff = 0;
+  int8_t co2 = -30;
+  temp_t temperature = 260;
+  time_t lightOn = 8 * HOUR + 30 * MINUTE;
+  time_t lightOff = 19 * HOUR;
 };
 
 struct Relay {
@@ -65,8 +71,8 @@ struct Relay {
 };
 
 Adafruit_SSD1306 display(-1);  // -1 = no reset pin
-THERMISTOR thermistor(NTC_PIN, THERM_RESISTANCE, THERM_BETA, THERM_SERIES_RESISTOR);
 ClickEncoder *encoder;
+RTC_DS1307 RTC;
 
 time_t changeTime(time_t time, time_t value) {
   time += value;
@@ -124,12 +130,17 @@ class Clock : public MenuItem {
     }
     
   public:
-    volatile time_t time = MAX_TIME / 2;
+    time_t time = MAX_TIME / 2;
     
     Clock() : MenuItem("Time") {};
     
     void updateTime() {
-      change(1);
+      DateTime now = RTC.now();
+      time_t currentTime = now.hour() * HOUR + now.minute() * MINUTE + now.second() * SECOND;
+      if (currentTime != time) {
+        time = currentTime;
+        notyfyListeners(); 
+      }
     }
     
     void onChange(int16_t value) {
@@ -246,7 +257,7 @@ class Temperature : public MenuItem {
     }
 
     void update() {
-      current = thermistor.read();
+      current = readThermistor();
     }
     
     void draw() {
@@ -277,7 +288,10 @@ class Save : public MenuItem {
   public:
     Save() : MenuItem("Save") {
       Settings settings;
-      EEPROM.get(0, settings);
+      
+      if (EEPROM.read(0) == SETTINGS_BYTE) {
+        EEPROM.get(1, settings);
+      }
       
       co2.interval = settings.co2;
       temperature.target = settings.temperature;
@@ -292,8 +306,9 @@ class Save : public MenuItem {
       settings.temperature = temperature.target;
       settings.lightOn = light.on;
       settings.lightOff = light.off;
-      
-      EEPROM.put(0, settings);
+
+      EEPROM.put(1, settings);
+      EEPROM.write(0, SETTINGS_BYTE);
 
       return false;
     }
@@ -348,23 +363,16 @@ class Menu {
 
 void timerIsr() {
   encoder->service();
-  clock.updateTime();
 }
 
-void setup() {
-  pinMode(LIGHT_PIN, OUTPUT);
-  pinMode(CO2_PIN, OUTPUT);
-  pinMode(COOLER_PIN, OUTPUT);
-  digitalWrite(LIGHT_PIN, HIGH);
-  digitalWrite(CO2_PIN, HIGH);
-  digitalWrite(COOLER_PIN, HIGH);
-  
-  encoder = new ClickEncoder(ENCODER_DT, ENCODER_CLK, ENCODER_SW, 4);
+void rtcInit() {
+  RTC.begin();
+  if (!RTC.isrunning()) {
+    RTC.adjust(DateTime(__DATE__, __TIME__));
+  }
+}
 
-  Timer1.initialize(1000);
-  Timer1.attachInterrupt(timerIsr);
-
-  // initialize display
+void displayInit() {
   display.begin(SSD1306_SWITCHCAPVCC, OLED_ADDR);
   display.clearDisplay();
   display.setTextSize(1);
@@ -373,13 +381,40 @@ void setup() {
   display.setCursor(10, 40);
   display.print("Hello Siarhei!");
   display.display();
-  delay(SECOND);
+}
+
+void relayInit() {
+  pinMode(LIGHT_PIN, OUTPUT);
+  pinMode(CO2_PIN, OUTPUT);
+  pinMode(COOLER_PIN, OUTPUT);
+  digitalWrite(LIGHT_PIN, HIGH);
+  digitalWrite(CO2_PIN, HIGH);
+  digitalWrite(COOLER_PIN, HIGH);  
+}
+
+void encoderInit() {
+  encoder = new ClickEncoder(ENCODER_DT, ENCODER_CLK, ENCODER_SW, 4);
+
+  Timer1.initialize(1000);
+  Timer1.attachInterrupt(timerIsr);
+}
+
+void setup() {
+  pinMode(13, OUTPUT);
+  
+  relayInit();
+  displayInit();
+  rtcInit();
+  encoderInit();
+
+  delay(1000);
 }
 
 void loop() {
+  clock.updateTime();
+  temperature.update();
   handleEncoder();
   menu.draw();
-  temperature.update();
 }
 
 void handleEncoder() {
@@ -395,3 +430,29 @@ void handleEncoder() {
   }
 }
 
+temp_t readThermistor() {
+  double rThermistor = 0;
+  double tKelvin     = 0;
+  double tCelsius    = 0;
+  double adcAverage  = 0;
+  int adcSamples[SAMPLE_NUMBER];
+  
+  for (int i = 0; i < SAMPLE_NUMBER; i++) {
+    adcSamples[i] = analogRead(NTC_PIN);
+    delay(10);
+  }
+
+  for (int i = 0; i < SAMPLE_NUMBER; i++) {
+    adcAverage += adcSamples[i];
+  }
+  adcAverage /= SAMPLE_NUMBER;
+  
+  rThermistor = THERM_SERIES_RESISTOR * ((MAX_ADC / adcAverage) - 1);
+  if (rThermistor > 25000 || rThermistor < 1000) return 0;
+  
+  tKelvin = (THERM_BETA * ROOM_TEMP) / 
+            (THERM_BETA + (ROOM_TEMP * log(rThermistor / THERM_RESISTANCE)));
+  tCelsius = tKelvin - 273.15;
+
+  return tCelsius * 10;
+}
