@@ -29,7 +29,6 @@
 #define THERM_BETA 3950
 #define THERM_SERIES_RESISTOR 9980
 
-const int    SAMPLE_NUMBER      = 10;
 const double MAX_ADC            = 1023.0;
 const double ROOM_TEMP          = 298.15;   // room temperature in Kelvin
 
@@ -236,6 +235,14 @@ class Co2 : public MenuItem {
 
 class Temperature : public MenuItem {
   private:
+    const uint16_t ADC_SAMPLES = 5000;
+    
+    volatile long adcSamples = 0;
+    volatile uint16_t adcCounter = 0;
+    volatile int16_t adcAvg = 0;
+    
+    const short activeDelay = 3;
+    bool active = false;
     Relay relay = Relay(COOLER_PIN);
     
   public:
@@ -253,7 +260,39 @@ class Temperature : public MenuItem {
     }
 
     void onTimeChange(time_t time) {
-      relay.change(current > target);
+      if (active && current <= target) {
+        active = false;
+      } else if (!active && current >= target + activeDelay) {
+        active = true;
+      }
+      
+      relay.change(active);
+      update();
+    }
+
+    void sample() {
+      adcSamples += analogRead(NTC_PIN);
+      adcCounter++;
+      if (adcCounter == ADC_SAMPLES) {
+        adcAvg = adcSamples / ADC_SAMPLES;
+        adcSamples = 0;
+        adcCounter = 0;
+      }
+    }
+    
+    temp_t readThermistor() {
+      double rThermistor = 0;
+      double tKelvin     = 0;
+      double tCelsius    = 0;
+      
+      rThermistor = THERM_SERIES_RESISTOR * ((MAX_ADC / adcAvg) - 1);
+      if (rThermistor > 25000 || rThermistor < 1000) return 0;
+      
+      tKelvin = (THERM_BETA * ROOM_TEMP) / 
+                (THERM_BETA + (ROOM_TEMP * log(rThermistor / THERM_RESISTANCE)));
+      tCelsius = tKelvin - 273.15;
+    
+      return tCelsius * 10;
     }
 
     void update() {
@@ -362,6 +401,7 @@ class Menu {
 } menu;
 
 void timerIsr() {
+  temperature.sample();
   encoder->service();
 }
 
@@ -412,7 +452,6 @@ void setup() {
 
 void loop() {
   clock.updateTime();
-  temperature.update();
   handleEncoder();
   menu.draw();
 }
@@ -430,29 +469,3 @@ void handleEncoder() {
   }
 }
 
-temp_t readThermistor() {
-  double rThermistor = 0;
-  double tKelvin     = 0;
-  double tCelsius    = 0;
-  double adcAverage  = 0;
-  int adcSamples[SAMPLE_NUMBER];
-  
-  for (int i = 0; i < SAMPLE_NUMBER; i++) {
-    adcSamples[i] = analogRead(NTC_PIN);
-    delay(10);
-  }
-
-  for (int i = 0; i < SAMPLE_NUMBER; i++) {
-    adcAverage += adcSamples[i];
-  }
-  adcAverage /= SAMPLE_NUMBER;
-  
-  rThermistor = THERM_SERIES_RESISTOR * ((MAX_ADC / adcAverage) - 1);
-  if (rThermistor > 25000 || rThermistor < 1000) return 0;
-  
-  tKelvin = (THERM_BETA * ROOM_TEMP) / 
-            (THERM_BETA + (ROOM_TEMP * log(rThermistor / THERM_RESISTANCE)));
-  tCelsius = tKelvin - 273.15;
-
-  return tCelsius * 10;
-}
