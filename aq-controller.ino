@@ -1,18 +1,13 @@
 #include <Arduino.h>
 #include <EEPROM.h>
 
-#include <Wire.h>
-#include <Adafruit_SSD1306.h>
-#include <Adafruit_GFX.h>
-#include <Fonts/FreeSans9pt7b.h>
-
 #include <ClickEncoder.h>
 #include <TimerOne.h>
 
-#include "RTClib.h"
-
-// OLED display TWI address
-#define OLED_ADDR 0x3C
+#include "MenuItem.h"
+#include "Clock.h"
+#include "Display.h"
+#include "types.h"
 
 #define ENCODER_SW A0
 #define ENCODER_DT A1
@@ -29,21 +24,10 @@
 #define THERM_BETA 3950
 #define THERM_SERIES_RESISTOR 9980
 
-const double MAX_ADC            = 1023.0;
-const double ROOM_TEMP          = 298.15;   // room temperature in Kelvin
-
-#define SECOND 1000UL
-#define MINUTE 60000UL
-#define HOUR 3600000UL
-#define MAX_TIME 86400000UL
+const double MAX_ADC = 1023.0;
+const double ROOM_TEMP = 298.15;   // room temperature in Kelvin
 
 #define SETTINGS_BYTE 0x00
-
-typedef unsigned long time_t;
-typedef char time_str_t[9];
-
-typedef int16_t temp_t;
-typedef char temp_str_t[7];
 
 struct Settings {
   int8_t co2 = -30;
@@ -69,9 +53,7 @@ struct Relay {
   }
 };
 
-Adafruit_SSD1306 display(-1);  // -1 = no reset pin
 ClickEncoder *encoder;
-RTC_DS1307 RTC;
 
 time_t changeTime(time_t time, time_t value) {
   time += value;
@@ -86,81 +68,9 @@ time_t changeTime(time_t time, time_t value) {
   return time;
 }
 
-void formatTime(time_str_t buffer, time_t time) {
-  int8_t seconds = time / SECOND % 60;
-  int8_t minutes = time / MINUTE % 60;
-  int8_t hours = time / HOUR % 24;
-  sprintf(buffer, "%02d:%02d:%02d", hours, minutes, seconds);
-}
-
-class MenuItem {
-  public:
-    const char *title;
-    
-    MenuItem() {};
-    MenuItem(const char *title) : title(title) {};
-    
-    virtual void onChange(int16_t value) {}
-    virtual bool onClick(bool isOpen) {
-      return isOpen;
-    }
-    virtual void draw() = 0;
-    virtual void onTimeChange(time_t time) {}
-};
-
-class Clock : public MenuItem {
-  private:
-    static const int8_t LISTENERS_COUNT = 3;
-    MenuItem *listeners[LISTENERS_COUNT];
-    
-    void notyfyListeners() {
-      for(int8_t i = 0; i < LISTENERS_COUNT; i++) {
-        listeners[i]->onTimeChange(time);
-      }
-    }
-    
-    void change(long value) {
-      long prevSecs = time / SECOND;
-      time = changeTime(time, value);
-
-      if ((time / SECOND) != prevSecs) {
-        notyfyListeners();
-      }
-    }
-    
-  public:
-    time_t time = MAX_TIME / 2;
-    
-    Clock() : MenuItem("Time") {};
-    
-    void updateTime() {
-      DateTime now = RTC.now();
-      time_t currentTime = now.hour() * HOUR + now.minute() * MINUTE + now.second() * SECOND;
-      if (currentTime != time) {
-        time = currentTime;
-        notyfyListeners(); 
-      }
-    }
-    
-    void onChange(int16_t value) {
-      change(value * MINUTE);
-    }
-    
-    void subscribe(MenuItem *item, int8_t index) {
-      listeners[index] = item;
-    }
-    
-    void draw() {
-      time_str_t timeString;
-      formatTime(timeString, time);
-
-      display.println(timeString);
-    }
-} clock;
-
 class Light : public MenuItem {
   private:
-    static const long HALF_HOUR = 1800000;
+    static const long HALF_HOUR = 1800;
     int8_t selected = 0;
     Relay relay = Relay(LIGHT_PIN);
     
@@ -405,31 +315,13 @@ void timerIsr() {
   encoder->service();
 }
 
-void rtcInit() {
-  RTC.begin();
-  if (!RTC.isrunning()) {
-    RTC.adjust(DateTime(__DATE__, __TIME__));
-  }
-}
-
-void displayInit() {
-  display.begin(SSD1306_SWITCHCAPVCC, OLED_ADDR);
-  display.clearDisplay();
-  display.setTextSize(1);
-  display.setFont(&FreeSans9pt7b);
-  display.setTextColor(WHITE);
-  display.setCursor(10, 40);
-  display.print("Hello Siarhei!");
-  display.display();
-}
-
 void relayInit() {
   pinMode(LIGHT_PIN, OUTPUT);
   pinMode(CO2_PIN, OUTPUT);
   pinMode(COOLER_PIN, OUTPUT);
   digitalWrite(LIGHT_PIN, HIGH);
   digitalWrite(CO2_PIN, HIGH);
-  digitalWrite(COOLER_PIN, HIGH);  
+  digitalWrite(COOLER_PIN, HIGH);
 }
 
 void encoderInit() {
