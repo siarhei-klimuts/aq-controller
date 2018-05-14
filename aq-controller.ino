@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include <EEPROM.h>
+#include <avr/wdt.h>
 
 #include <ClickEncoder.h>
 #include <TimerOne.h>
@@ -332,6 +333,7 @@ void encoderInit() {
 }
 
 void setup() {
+  wdt_enable(WDTO_2S);
   pinMode(13, OUTPUT);
   
   relayInit();
@@ -343,6 +345,7 @@ void setup() {
 }
 
 void loop() {
+  wdt_reset();
   clock.updateTime();
   handleEncoder();
   menu.draw();
