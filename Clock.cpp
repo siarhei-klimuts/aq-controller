@@ -2,8 +2,8 @@
 
 #include <Arduino.h>
 #include "Display.h"
-#include "MenuItem.h"
 #include "RTClib.h"
+#include "MenuItem.h"
 
 RTC_DS1307 RTC;
 
@@ -29,10 +29,18 @@ void Clock::notyfyListeners() {
 
 void Clock::updateTime() {
   DateTime now = RTC.now();
-  time_t currentTime = now.hour() * HOUR + now.minute() * MINUTE + now.second() * SECOND;
-  if (currentTime != time) {
-    time = currentTime;
-    notyfyListeners(); 
+  uint8_t hour = now.hour();
+  uint8_t minute = now.minute();
+  uint8_t second = now.second();
+
+  if(hour < 24 && minute < 60 && second < 60) {
+    time_t currentTime = hour * HOUR + minute * MINUTE + second * SECOND;
+    if (currentTime != time) {
+      time = currentTime;
+      notyfyListeners(); 
+    }
+  } else {
+    errors++;
   }
 }
 

@@ -4,10 +4,10 @@
 #include "types.h"
 #include "MenuItem.h"
 
-#define SECOND 1UL
-#define MINUTE 60UL
-#define HOUR 3600UL
-#define MAX_TIME 86400UL 
+const time_t SECOND = 1;
+const time_t MINUTE = 60;
+const time_t HOUR = 3600;
+const time_t MAX_TIME = 24 * HOUR;
 
 class Clock : public MenuItem {
   private:
@@ -18,6 +18,7 @@ class Clock : public MenuItem {
     
   public:
     time_t time = MAX_TIME / 2;
+    int16_t errors;
     
     Clock() : MenuItem("Time") {};
     

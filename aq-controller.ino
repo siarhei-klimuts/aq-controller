@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include <EEPROM.h>
 #include <avr/wdt.h>
+#include <Wire.h>
 
 #include <ClickEncoder.h>
 #include <TimerOne.h>
@@ -32,7 +33,7 @@ const double ROOM_TEMP = 298.15;   // room temperature in Kelvin
 
 struct Settings {
   int8_t co2 = -30;
-  temp_t temperature = 260;
+  temp_t temperature = 240;
   time_t lightOn = 8 * HOUR + 30 * MINUTE;
   time_t lightOff = 19 * HOUR;
 };
@@ -71,11 +72,11 @@ time_t changeTime(time_t time, time_t value) {
 
 class Light : public MenuItem {
   private:
-    static const long HALF_HOUR = 1800;
+    static const time_t HALF_HOUR = HOUR * 0.5;
     int8_t selected = 0;
-    Relay relay = Relay(LIGHT_PIN);
     
   public:
+    Relay relay = Relay(LIGHT_PIN);
     time_t on;
     time_t off;
 
@@ -116,16 +117,13 @@ class Light : public MenuItem {
       formatTime(str, off);
       display.print(selected == 1 ? "-" : " ");
       display.println(str);
-
     }
 } light;
 
-class Co2 : public MenuItem {
-  private:
-    Relay relay = Relay(CO2_PIN);
-    
+class Co2 : public MenuItem {    
   public:
-    int8_t interval = -30; //minutes
+    Relay relay = Relay(CO2_PIN);
+    int8_t interval = 0; //minutes
 
     Co2() : MenuItem("CO2") {};
 
@@ -153,10 +151,9 @@ class Temperature : public MenuItem {
     volatile int16_t adcAvg = 0;
     
     const short activeDelay = 3;
-    bool active = false;
-    Relay relay = Relay(COOLER_PIN);
     
   public:
+    Relay relay = Relay(COOLER_PIN);
     temp_t target = 0;
     temp_t current = 0;
 
@@ -171,13 +168,12 @@ class Temperature : public MenuItem {
     }
 
     void onTimeChange(time_t time) {
-      if (active && current <= target) {
-        active = false;
-      } else if (!active && current >= target + activeDelay) {
-        active = true;
+      if (relay.relayEnabled && current <= target) {
+        relay.change(false);
+      } else if (!relay.relayEnabled && current >= target + activeDelay) {
+        relay.change(true);
       }
       
-      relay.change(active);
       update();
     }
 
@@ -231,6 +227,14 @@ class Stats : public MenuItem {
 
       display.println(timeStr);
       display.println(tempStr);
+      display.print("Light: ");
+      display.println(light.relay.relayEnabled);
+      display.print("CO2: ");
+      display.println(co2.relay.relayEnabled);
+      display.print("Cool: ");
+      display.println(temperature.relay.relayEnabled);
+      display.print("Errors: ");
+      display.print(clock.errors);
     }
 } stats;
 
@@ -302,7 +306,7 @@ class Menu {
     void draw() {
       display.clearDisplay();
 
-      display.setCursor(0, 12);
+      display.setCursor(0, 0);
       if (isOpened) display.print('-');
       display.println(items[selected]->title);
       items[selected]->draw();
@@ -333,6 +337,7 @@ void encoderInit() {
 }
 
 void setup() {
+  Wire.begin();
   wdt_enable(WDTO_2S);
   pinMode(13, OUTPUT);
   
