@@ -57,23 +57,23 @@ struct Relay {
 
 ClickEncoder *encoder;
 
-time_t changeTime(time_t time, time_t value) {
-  time += value;
-  
-  if (time >= MAX_TIME) {
-    time = time - MAX_TIME;
-  }
-  if (time < 0) {
-    time = MAX_TIME + time;
-  }
-
-  return time;
-}
-
 class Light : public MenuItem {
   private:
     static const time_t HALF_HOUR = HOUR * 0.5;
     int8_t selected = 0;
+
+    time_t changeTime(time_t time, time_t value) {
+      time += value;
+      
+      if (time >= MAX_TIME) {
+        time = time - MAX_TIME;
+      }
+      if (time < 0) {
+        time = MAX_TIME + time;
+      }
+    
+      return time;
+    }
     
   public:
     Relay relay = Relay(LIGHT_PIN);

@@ -3,7 +3,7 @@
 
 #include <Arduino.h>
 
-typedef unsigned long time_t;
+typedef long time_t;
 typedef char time_str_t[9];
 
 typedef int16_t temp_t;
